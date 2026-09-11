@@ -4,7 +4,7 @@ import { dayKey, dailyTuning } from '../app/daily'
 import { createLeaderboard, type BoardEntry, type Leaderboard } from '../app/leaderboard'
 import {
   EMPTY_STATS, MILESTONES, TABLE_SIZE, addScore, averageScore, bestOf,
-  forDay, rankOf, recordRun, unlockedCount,
+  rankOf, recordRun, unlockedCount,
   type Mode, type ScoreEntry, type Stats,
 } from '../app/scores'
 import { DEFAULT_SETTINGS, mergeSettings, sanitizeName, type Settings } from '../app/settings'
@@ -14,6 +14,13 @@ type Screen = 'menu' | 'scores' | 'stats' | 'settings' | 'howto' | 'over' | 'gam
 const KEY_SCORES = 'pi.stack.scores'
 const KEY_STATS = 'pi.stack.stats'
 const KEY_SETTINGS = 'pi.stack.settings'
+
+/** Player names arrive from other people; never let them become markup. */
+function escapeHtml(raw: string): string {
+  return raw.replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] ?? c
+  ))
+}
 
 function el<T extends HTMLElement>(id: string): T {
   const node = document.getElementById(id)
@@ -70,7 +77,7 @@ export class Shell {
     if (raw === 'demo') { this.show('menu'); return }
     const routable: Screen[] = ['menu', 'scores', 'stats', 'settings', 'howto']
     const screen = routable.includes(raw as Screen) ? (raw as Screen) : 'menu'
-    if (screen === 'scores') this.renderScores()
+    if (screen === 'scores') void this.renderScores()
     if (screen === 'stats') this.renderStats()
     if (screen === 'settings') this.renderSettings()
     this.show(screen)
@@ -108,6 +115,11 @@ export class Shell {
       e.stopPropagation()
       void this.share()
     })
+
+    el('invite').addEventListener('click', (e) => {
+      e.stopPropagation()
+      void this.invite()
+    })
   }
 
   private go(dest: string): void {
@@ -115,7 +127,7 @@ export class Shell {
       case 'play': this.startRun('endless'); break
       case 'daily': this.startRun('daily'); break
       case 'again': this.startRun(this.mode); break
-      case 'scores': this.renderScores(); this.show('scores'); break
+      case 'scores': void this.renderScores(); this.show('scores'); break
       case 'stats': this.renderStats(); this.show('stats'); break
       case 'settings': this.renderSettings(); this.show('settings'); break
       case 'howto': this.show('howto'); break
@@ -202,6 +214,22 @@ export class Shell {
     this.show('over')
   }
 
+  /** Hand out the link. Everyone who plays it lands on the same board. */
+  private async invite(): Promise<void> {
+    const url = location.origin + location.pathname
+    const text = 'Play STACK — how high can you get?'
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'STACK', text, url })
+        return
+      }
+      await navigator.clipboard.writeText(url)
+      this.toast('LINK COPIED')
+    } catch {
+      // Share sheet dismissed, or clipboard blocked — neither is an error.
+    }
+  }
+
   private async share(): Promise<void> {
     const r = this.lastResult
     if (!r) return
@@ -230,42 +258,58 @@ export class Shell {
         this.boardTab = (tab.dataset.mode as Mode) ?? 'endless'
         for (const t of document.querySelectorAll('.tab')) t.classList.remove('is-on')
         tab.classList.add('is-on')
-        this.renderScores()
+        void this.renderScores()
       })
     }
   }
 
-  private renderScores(): void {
+  /**
+   * The table comes from the leaderboard adapter, so the same screen renders
+   * this device's scores or every player's without knowing which it got.
+   */
+  private async renderScores(): Promise<void> {
     const list = el('score-list')
-    el('board-kind').textContent = this.board.kind === 'global' ? 'GLOBAL' : 'LOCAL'
+    const mode = this.boardTab
+    const global = this.board.kind === 'global'
+    el('board-kind').textContent = global ? 'GLOBAL' : 'LOCAL'
+
+    list.innerHTML = ''
+    const loading = document.createElement('li')
+    loading.className = 'empty'
+    loading.textContent = 'Loading…'
+    list.appendChild(loading)
 
     const today = dayKey(new Date())
-    const rows = this.boardTab === 'daily'
-      ? forDay(this.table, today)
-      : this.table.filter((e) => e.mode === 'endless')
+    const rows = await this.board.top(mode, TABLE_SIZE, today)
+    // A slow board must not overwrite a tab the player has since switched away
+    // from, so bail if the selection moved while we were waiting.
+    if (this.boardTab !== mode) return
 
     list.innerHTML = ''
     if (rows.length === 0) {
       const li = document.createElement('li')
       li.className = 'empty'
-      li.textContent = this.boardTab === 'daily'
-        ? 'No run today yet. Play the daily challenge.'
+      li.textContent = mode === 'daily'
+        ? 'No runs today yet. Play the daily challenge.'
         : 'No scores yet. Go stack something.'
       list.appendChild(li)
     }
 
-    for (const [i, row] of rows.slice(0, TABLE_SIZE).entries()) {
+    const mine = this.settings.name || 'Player'
+    for (const [i, row] of rows.entries()) {
       const li = document.createElement('li')
+      if (row.name === mine) li.classList.add('me')
       const when = new Date(row.at).toLocaleDateString()
       li.innerHTML = `<span class="rank">${i + 1}</span>`
-        + `<span><span class="val">${row.score}</span>`
-        + `<span class="meta"> · ×${row.combo} · ${when}</span></span>`
+        + `<span><span class="who">${escapeHtml(row.name)}</span>`
+        + `<span class="meta">×${row.combo} · ${when}</span></span>`
+        + `<span class="val">${row.score}</span>`
       list.appendChild(li)
     }
 
-    el('board-note').textContent = this.board.kind === 'global'
-      ? 'Global board — scores from every player.'
-      : 'Scores are saved on this device. A global board needs a free backend.'
+    el('board-note').textContent = global
+      ? 'Global board — everyone who plays this link appears here.'
+      : 'Saved on this device. See docs/LEADERBOARD.md to make it global.'
   }
 
   private renderStats(): void {

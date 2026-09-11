@@ -21,25 +21,32 @@ export interface BoardEntry {
 
 export interface Leaderboard {
   readonly kind: 'local' | 'global'
-  /** Highest scores first. */
-  top(mode: Mode, limit: number): Promise<BoardEntry[]>
+  /** Highest scores first. Pass a day to scope the daily board. */
+  top(mode: Mode, limit: number, day?: string): Promise<BoardEntry[]>
   submit(entry: BoardEntry, mode: Mode, day?: string): Promise<boolean>
 }
 
 const LOCAL_KEY = 'pi.stack.board'
 
+/** A stored row keeps the day so the daily board can be filtered to today. */
+interface StoredEntry extends BoardEntry { day?: string }
+
 /** Everything the player has done on this device. Always available. */
 export class LocalBoard implements Leaderboard {
   readonly kind = 'local' as const
 
-  async top(mode: Mode, limit: number): Promise<BoardEntry[]> {
-    const all = load<Record<string, BoardEntry[]>>(LOCAL_KEY, {})
-    return (all[mode] ?? []).slice(0, limit)
+  async top(mode: Mode, limit: number, day?: string): Promise<BoardEntry[]> {
+    const all = load<Record<string, StoredEntry[]>>(LOCAL_KEY, {})
+    const rows = all[mode] ?? []
+    // The daily board is about today, not every day ever played.
+    const scoped = mode === 'daily' && day ? rows.filter((r) => r.day === day) : rows
+    return scoped.slice(0, limit)
   }
 
-  async submit(entry: BoardEntry, mode: Mode): Promise<boolean> {
-    const all = load<Record<string, BoardEntry[]>>(LOCAL_KEY, {})
-    const next = [...(all[mode] ?? []), entry]
+  async submit(entry: BoardEntry, mode: Mode, day?: string): Promise<boolean> {
+    const all = load<Record<string, StoredEntry[]>>(LOCAL_KEY, {})
+    const row: StoredEntry = { ...entry, ...(day ? { day } : {}) }
+    const next = [...(all[mode] ?? []), row]
       .sort((a, b) => b.score - a.score || b.combo - a.combo || a.at - b.at)
       .slice(0, 50)
     all[mode] = next
@@ -72,7 +79,7 @@ export class GlobalBoard implements Leaderboard {
     }
   }
 
-  async top(mode: Mode, limit: number): Promise<BoardEntry[]> {
+  async top(mode: Mode, limit: number, day?: string): Promise<BoardEntry[]> {
     try {
       const q = new URLSearchParams({
         select: 'name,score,combo,at',
@@ -80,19 +87,20 @@ export class GlobalBoard implements Leaderboard {
         order: 'score.desc',
         limit: String(limit),
       })
+      if (mode === 'daily' && day) q.set('day', `eq.${day}`)
       const res = await fetch(`${this.cfg.url}/rest/v1/scores?${q}`, { headers: this.headers() })
       if (!res.ok) throw new Error(`status ${res.status}`)
       const rows: unknown = await res.json()
       if (!Array.isArray(rows)) return []
       return rows as BoardEntry[]
     } catch {
-      return this.fallback.top(mode, limit)
+      return this.fallback.top(mode, limit, day)
     }
   }
 
   async submit(entry: BoardEntry, mode: Mode, day?: string): Promise<boolean> {
     // Always keep a local copy, so a network failure never loses the run.
-    await this.fallback.submit(entry, mode)
+    await this.fallback.submit(entry, mode, day)
     try {
       const res = await fetch(`${this.cfg.url}/rest/v1/scores`, {
         method: 'POST',

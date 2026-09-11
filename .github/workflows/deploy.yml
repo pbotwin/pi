@@ -33,7 +33,13 @@ jobs:
 
       # Typecheck lives inside `npm run build`; tests gate the deploy.
       - run: npm test
+
+      # Optional: set these repository secrets to turn on the global leaderboard.
+      # Absent, the build simply ships the on-device board instead.
       - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
       - uses: actions/configure-pages@v5
 

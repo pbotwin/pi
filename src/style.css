@@ -194,7 +194,8 @@ button, input { font: inherit; color: inherit; }
 .list li.me { border-color: rgba(255, 77, 132, 0.5); background: rgba(255, 77, 132, 0.08); }
 .list .rank { color: var(--dim); font-variant-numeric: tabular-nums; }
 .list .val { font-weight: 700; font-variant-numeric: tabular-nums; }
-.list .meta { color: var(--dim); font-size: 0.7rem; }
+.list .who { display: block; font-weight: 600; }
+.list .meta { display: block; color: var(--dim); font-size: 0.68rem; margin-top: 0.1rem; }
 /* The empty state is prose, not a score row — opt it out of the row grid. */
 .list li.empty {
   display: block;
