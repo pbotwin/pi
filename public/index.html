@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pi</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: grid; place-items: center;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #fbfaf8; color: #17171c;
+  }
+  main { padding: 2rem; max-width: 34rem; text-align: center; }
+  h1 { font-size: 4rem; margin: 0; letter-spacing: -0.03em; }
+  .tag { color: #e01f5c; font-weight: 600; }
+  p { color: #5a5a68; }
+  code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    background: #00000010; padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em;
+  }
+  .status {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    margin-top: 1.5rem; padding: 0.5rem 1rem;
+    border: 1px solid #00000018; border-radius: 999px; font-size: 0.875rem;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #17c964; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0f0f12; color: #f2f2f5; }
+    p { color: #9a9aa8; }
+    code, .status { border-color: #ffffff20; }
+    code { background: #ffffff12; }
+  }
+</style>
+</head>
+<body>
+  <main>
+    <h1>&pi;</h1>
+    <p><span class="tag">pi</span> &mdash; deployed automatically from <code>main</code> via GitHub Actions.</p>
+    <p>Anything placed in <code>public/</code> ships to this site on every push.</p>
+    <div class="status"><span class="dot"></span> Pipeline live</div>
+  </main>
+</body>
+</html>
