@@ -1,0 +1,129 @@
+:root {
+  --ink: #f4f6ff;
+  --shadow: 0 2px 20px rgba(0, 0, 0, 0.45);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #0d1020;
+  color: var(--ink);
+  /* Kill mobile scroll/zoom/long-press so taps only ever mean "drop". */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---------- HUD ---------- */
+#hud {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  padding: calc(env(safe-area-inset-top, 0px) + 5vh) 1rem 0;
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+#score {
+  font-size: clamp(3rem, 16vw, 6rem);
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-shadow: var(--shadow);
+  font-variant-numeric: tabular-nums;
+}
+
+#combo {
+  margin-top: 0.5rem;
+  font-size: clamp(0.8rem, 3.5vw, 1.1rem);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-shadow: var(--shadow);
+  transition: opacity 0.25s ease;
+}
+#combo.hidden { opacity: 0; }
+
+/* ---------- Overlay (start / game over) ---------- */
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 10, 24, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+#overlay.show { opacity: 1; pointer-events: auto; }
+
+.panel { text-align: center; padding: 2rem; }
+
+.panel h1 {
+  font-size: clamp(2.5rem, 13vw, 4.5rem);
+  font-weight: 200;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  margin-bottom: 1rem;
+}
+
+.panel .sub {
+  font-size: clamp(0.9rem, 4vw, 1.05rem);
+  line-height: 1.7;
+  opacity: 0.72;
+  margin-bottom: 1.75rem;
+}
+
+.panel .best {
+  font-size: 0.8rem;
+  letter-spacing: 0.2em;
+  opacity: 0.55;
+  margin-bottom: 2rem;
+}
+.panel .best span { font-weight: 700; opacity: 1; }
+
+.panel .cue {
+  font-size: 0.85rem;
+  letter-spacing: 0.25em;
+  font-weight: 600;
+  animation: pulse 1.9s ease-in-out infinite;
+}
+
+@keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel .cue { animation: none; opacity: 0.8; }
+}
+
+/* ---------- Landscape nudge ---------- */
+#rotate {
+  position: fixed;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: #0d1020;
+  text-align: center;
+  line-height: 2;
+  letter-spacing: 0.15em;
+  font-size: 1.1rem;
+  z-index: 10;
+}
+/* Only nag on short landscape viewports — desktop stays playable. */
+@media (orientation: landscape) and (max-height: 520px) {
+  #rotate { display: grid; }
+}

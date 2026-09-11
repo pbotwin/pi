@@ -3,6 +3,8 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 # Least privilege: only what deploy-pages needs.
@@ -22,20 +24,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Add your build step here when the project gains one, e.g.
-      #   - uses: actions/setup-node@v4
-      #     with: { node-version: '20', cache: 'npm' }
-      #   - run: npm ci && npm run build
-      # As long as the output lands in ./public, the steps below stay unchanged.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # Typecheck lives inside `npm run build`; tests gate the deploy.
+      - run: npm test
+      - run: npm run build
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: ./public
+          path: ./dist
 
   deploy:
     needs: build
+    # Pull requests get built and tested, but only main publishes.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

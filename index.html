@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1020">
+<meta name="description" content="A one-tap 3D tower stacking game. Time your taps, keep the tower alive.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Stack &mdash; pi</title>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="hud">
+    <div id="score">0</div>
+    <div id="combo" class="hidden"></div>
+  </div>
+
+  <div id="overlay" class="show">
+    <div class="panel">
+      <h1>STACK</h1>
+      <p class="sub">Tap to drop the block.<br>Keep it aligned or lose the overhang.</p>
+      <p class="best">BEST <span id="best">0</span></p>
+      <div class="cue">TAP TO START</div>
+    </div>
+  </div>
+
+  <div id="rotate">
+    <p>↻<br>Rotate to portrait</p>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
