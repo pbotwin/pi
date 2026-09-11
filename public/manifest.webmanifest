@@ -1,0 +1,14 @@
+{
+  "name": "Stack — pi",
+  "short_name": "Stack",
+  "description": "A one-tap 3D tower stacking game.",
+  "start_url": "/pi/",
+  "scope": "/pi/",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0d1020",
+  "theme_color": "#0d1020",
+  "icons": [
+    { "src": "/pi/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

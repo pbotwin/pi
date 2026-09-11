@@ -3,36 +3,116 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#05060e">
-<meta name="description" content="Neon physics demolition. Drag to aim, release to fire, bring the whole structure down.">
+<meta name="theme-color" content="#0d1020">
+<meta name="description" content="A one-tap 3D tower stacking game. Time your taps, keep the tower alive.">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>Overload &mdash; pi</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Stack &mdash; pi</title>
 </head>
 <body>
   <canvas id="scene"></canvas>
 
-  <div id="hud">
-    <div class="row">
-      <div class="stat"><span class="label">SECTOR</span><span id="level">1</span></div>
-      <div class="stat score"><span class="label">SCORE</span><span id="score">0</span></div>
-      <div class="stat"><span class="label">CORES</span><span id="cores">0</span></div>
-    </div>
-    <div id="shots" class="shots"></div>
+  <!-- In-game HUD ------------------------------------------------------- -->
+  <div id="hud" hidden>
+    <div id="score">0</div>
+    <div id="combo" class="hidden"></div>
+    <button id="quit" class="icon-btn" type="button" aria-label="Back to menu">&#10005;</button>
   </div>
 
-  <div id="power"><div id="power-fill"></div></div>
+  <!-- Screens ----------------------------------------------------------- -->
+  <div id="app">
 
-  <div id="hint">DRAG TO AIM &middot; RELEASE TO FIRE</div>
+    <section class="screen" data-screen="menu">
+      <h1 class="logo">STACK</h1>
+      <p class="tagline">Tap to drop. Keep it aligned.</p>
+      <p class="best-line">BEST <span id="menu-best">0</span></p>
+      <nav class="menu">
+        <button class="btn primary" data-go="play">PLAY</button>
+        <button class="btn" data-go="daily">DAILY CHALLENGE</button>
+        <button class="btn" data-go="scores">SCORES</button>
+        <button class="btn" data-go="stats">STATS</button>
+        <button class="btn" data-go="settings">SETTINGS</button>
+        <button class="btn ghost" data-go="howto">HOW TO PLAY</button>
+      </nav>
+    </section>
 
-  <div id="overlay">
-    <div class="panel">
-      <h1>OVERLOAD</h1>
-      <p class="sub">Drag anywhere to aim.<br>Release to fire. Destroy every core.</p>
-      <div class="cue">TAP TO BEGIN</div>
-    </div>
+    <section class="screen" data-screen="scores" hidden>
+      <header class="bar">
+        <button class="icon-btn" data-go="menu" aria-label="Back">&#8592;</button>
+        <h2>SCORES</h2>
+        <span id="board-kind" class="pill">LOCAL</span>
+      </header>
+      <div class="tabs">
+        <button class="tab is-on" data-mode="endless">ENDLESS</button>
+        <button class="tab" data-mode="daily">DAILY</button>
+      </div>
+      <ol id="score-list" class="list"></ol>
+      <p id="board-note" class="note"></p>
+    </section>
+
+    <section class="screen" data-screen="stats" hidden>
+      <header class="bar">
+        <button class="icon-btn" data-go="menu" aria-label="Back">&#8592;</button>
+        <h2>STATS</h2>
+        <span class="pill" id="milestone-count">0/0</span>
+      </header>
+      <dl id="stat-grid" class="grid"></dl>
+      <h3 class="sub-head">MILESTONES</h3>
+      <ul id="milestone-list" class="badges"></ul>
+    </section>
+
+    <section class="screen" data-screen="settings" hidden>
+      <header class="bar">
+        <button class="icon-btn" data-go="menu" aria-label="Back">&#8592;</button>
+        <h2>SETTINGS</h2>
+        <span></span>
+      </header>
+      <label class="field">
+        <span>NAME</span>
+        <input id="set-name" type="text" maxlength="12" placeholder="Player" autocomplete="off">
+      </label>
+      <label class="toggle"><span>SOUND</span><input id="set-sound" type="checkbox"></label>
+      <label class="toggle"><span>VIBRATION</span><input id="set-haptics" type="checkbox"></label>
+      <label class="toggle"><span>REDUCED MOTION</span><input id="set-motion" type="checkbox"></label>
+      <button class="btn danger" id="wipe">RESET ALL DATA</button>
+      <p class="note">Scores and settings are stored on this device.</p>
+    </section>
+
+    <section class="screen" data-screen="howto" hidden>
+      <header class="bar">
+        <button class="icon-btn" data-go="menu" aria-label="Back">&#8592;</button>
+        <h2>HOW TO PLAY</h2>
+        <span></span>
+      </header>
+      <ul class="rules">
+        <li>A slab slides above the tower. <strong>Tap anywhere</strong> to drop it.</li>
+        <li>Whatever hangs over the edge is <strong>sheared off</strong> — the tower narrows.</li>
+        <li>Land one dead centre for a <strong>PERFECT</strong>: the slab grows back.</li>
+        <li>Chain perfects and each one gives back <strong>more</strong>.</li>
+        <li>Miss the tower completely and the run ends.</li>
+        <li>The <strong>faint band</strong> marks your best height. Beat it.</li>
+      </ul>
+      <button class="btn primary" data-go="play">GOT IT</button>
+    </section>
+
+    <section class="screen" data-screen="over" hidden>
+      <h2 id="over-title">GAME OVER</h2>
+      <p class="big" id="over-score">0</p>
+      <p class="sub" id="over-detail"></p>
+      <p class="best-line">BEST <span id="over-best">0</span></p>
+      <nav class="menu">
+        <button class="btn primary" data-go="again">PLAY AGAIN</button>
+        <button class="btn" id="share">SHARE SCORE</button>
+        <button class="btn ghost" data-go="menu">MENU</button>
+      </nav>
+    </section>
+
   </div>
+
+  <div id="rotate"><p>&#8635;<br>Rotate to portrait</p></div>
+  <div id="toast"></div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

@@ -1,523 +1,492 @@
 import {
-  AmbientLight, Color, DirectionalLight, Fog, GridHelper, Group, Mesh,
-  MeshLambertMaterial, PerspectiveCamera, PlaneGeometry, PointLight,
-  Scene, SphereGeometry, Vector3, WebGLRenderer,
+  AdditiveBlending, AmbientLight, BoxGeometry, Color, DirectionalLight, Fog,
+  Mesh, MeshBasicMaterial, MeshLambertMaterial, OrthographicCamera,
+  RingGeometry, Scene, Vector3, WebGLRenderer,
 } from 'three'
-import * as CANNON from 'cannon-es'
 
 import {
-  CAM_FOV, CAM_LOOK, CAM_POS, CORE_IMPULSE, FRACTURE_IMPULSE,
-  FRAGMENTS, GRAVITY, KILL_Y, MAX_BODIES, MUZZLE, ORB_MASS, ORB_R,
-  PLATFORM_H, PLATFORM_R, SETTLE_TIME, SHOTS_BASE,
+  BLOCK_HEIGHT, BASE_SIZE, BUZZ_FAIL, BUZZ_PERFECT, BUZZ_PLACE, CAMERA_VIEW,
+  DEBRIS_GRAVITY, DEBRIS_LIFE, MAX_SPEED, MIN_VIEW_WIDTH, SHAKE_DECAY,
+  PERFECT_EPS, SHAKE_PERFECT, SHAKE_SLICE, SPEED_STEP, START_SPEED, SWING,
 } from './config'
-import { NEON, NeonBlock, NeonCore, NeonGeometry } from './neon'
-import { buildStructure, makeRand, type Piece, type PieceKind } from './structure'
-import { aimFromDrag, launchVelocity, samplePath, type Aim } from './trajectory'
+import { backdropColor, blockColor } from './palette'
+import { axisForLevel, regrowFor, resolveDrop, type Axis, type Slab } from './tower'
 import { Blips } from './audio'
-import type { Hud } from '../ui/hud'
-
-type State = 'aiming' | 'firing' | 'settling' | 'cleared' | 'over'
-type Kind = PieceKind | 'fragment' | 'orb'
-
-interface Entity {
-  body: CANNON.Body
-  group: Group
-  view: NeonBlock | NeonCore
-  kind: Kind
-  color: Color
-  heat: number
-  age: number
-  alive: boolean
+import { Effects, buzz } from './effects'
+/** What the game reports outwards. The app shell owns all the UI. */
+export interface GameHooks {
+  onScore(score: number): void
+  onCombo(combo: number): void
+  onGameOver(result: RunResult): void
+  /** Height, in blocks, of the band to beat. Zero hides it. */
+  bestHeight(): number
 }
 
-const PLATFORM_TOP = PLATFORM_H
+export interface RunResult {
+  score: number
+  perfects: number
+  bestCombo: number
+}
+
+export interface Tuning {
+  speedScale: number
+  swingScale: number
+}
+
+type State = 'ready' | 'playing' | 'over'
+
+interface Debris {
+  mesh: Mesh
+  vel: Vector3
+  spin: Vector3
+  life: number
+}
+
+/** Isometric offset from the camera's look target. */
+const CAM_OFFSET = new Vector3(1, 0.82, 1).normalize().multiplyScalar(26)
 
 export class Game {
   private renderer: WebGLRenderer
   private scene = new Scene()
-  private camera = new PerspectiveCamera(CAM_FOV, 1, 0.1, 400)
-  private world: CANNON.World
+  private camera = new OrthographicCamera()
+  private light = new DirectionalLight(0xffffff, 2.1)
 
-  private geo = new NeonGeometry()
-  private entities: Entity[] = []
-  private tracer: Mesh[] = []
-  private orbLight = new PointLight(NEON.orb.getHex(), 0, 16, 2)
+  private geometry = new BoxGeometry(1, 1, 1)
+  private slabMeshes: Mesh[] = []
+  private debris: Debris[] = []
 
-  private level = 1
-  private shots = SHOTS_BASE
+  private stack: Slab[] = []
+  private moving: Mesh | null = null
+  private movingAxis: Axis = 'x'
+  private direction = 1
+  private speed = START_SPEED
+
+  private state: State = 'ready'
   private score = 0
-  private state: State = 'aiming'
-  private settleFor = 0
-  private clock = 0
-  private shake = 0
+  private combo = 0
+  /** Gates restarts until the game-over panel is actually on screen. */
+  private restartArmed = true
 
-  private dragging = false
-  private demo = false
-  private demoWait = 0
-  private aim: Aim = aimFromDrag(0, 0)
-
-  private camBase = new Vector3(CAM_POS.x, CAM_POS.y, CAM_POS.z)
+  private camTarget = new Vector3()
+  private backdrop = new Color()
   private lastTime = 0
   private disposed = false
-  private blips = new Blips()
-  private hud: Hud
+  private shake = 0
+  private demo = false
+  private demoCount = 0
 
-  constructor(canvas: HTMLCanvasElement, hud: Hud) {
-    this.hud = hud
+  /** Flat ring parked at the player's best height — something to climb towards. */
+  private bestMark: Mesh | null = null
+
+  private blips = new Blips()
+  private effects: Effects
+  private hooks: GameHooks
+
+  private perfects = 0
+  private bestCombo = 0
+  private tuning: Tuning = { speedScale: 1, swingScale: 1 }
+  private allowHaptics = true
+  private calmMotion = false
+
+  constructor(canvas: HTMLCanvasElement, hooks: GameHooks) {
+    this.hooks = hooks
     this.renderer = new WebGLRenderer({ canvas, antialias: true })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
     this.renderer.shadowMap.enabled = true
-    this.scene.background = new Color(0x05060e)
-    this.scene.fog = new Fog(0x05060e, 28, 68)
 
-    this.scene.add(new AmbientLight(0x4a5a8a, 1.1))
-    const key = new DirectionalLight(0x9fd8ff, 1.5)
-    key.position.set(6, 16, 10)
-    key.castShadow = true
-    key.shadow.mapSize.set(1024, 1024)
-    const sc = key.shadow.camera
-    sc.left = -12; sc.right = 12; sc.top = 14; sc.bottom = -6
-    sc.near = 1; sc.far = 48
-    this.scene.add(key)
-    this.scene.add(this.orbLight)
+    this.scene.add(new AmbientLight(0xffffff, 1.15))
+    this.light.castShadow = true
+    this.light.shadow.mapSize.set(1024, 1024)
+    const sc = this.light.shadow.camera
+    sc.left = -9
+    sc.right = 9
+    sc.top = 9
+    sc.bottom = -9
+    sc.near = 0.5
+    sc.far = 60
+    this.scene.add(this.light, this.light.target)
 
-    this.world = new CANNON.World({ gravity: new CANNON.Vec3(0, GRAVITY, 0) })
-    this.world.broadphase = new CANNON.SAPBroadphase(this.world)
-    this.world.allowSleep = true
-    this.world.defaultContactMaterial.friction = 0.42
-    this.world.defaultContactMaterial.restitution = 0.06
+    this.backdrop.copy(backdropColor(0))
+    this.scene.background = this.backdrop.clone()
+    this.scene.fog = new Fog(this.backdrop.getHex(), 28, 70)
 
-    this.buildArena()
-    this.buildTracer()
-    this.loadLevel(1)
+    this.effects = new Effects(this.scene)
+    this.buildBestMark()
+
+    this.reset()
     this.resize()
   }
 
-  // -------------------------------------------------------------------- arena
-
-  private buildArena(): void {
-    const ground = new Mesh(
-      new PlaneGeometry(300, 300),
-      new MeshLambertMaterial({ color: 0x05060e }),
+  /** A faint band hovering at the height of the player's record run. */
+  private buildBestMark(): void {
+    const mesh = new Mesh(
+      new RingGeometry(BASE_SIZE * 0.82, BASE_SIZE * 0.94, 4, 1),
+      new MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0,
+        blending: AdditiveBlending, depthWrite: false,
+      }),
     )
-    ground.rotation.x = -Math.PI / 2
-    ground.receiveShadow = true
-    this.scene.add(ground)
-
-    const grid = new GridHelper(140, 70, NEON.grid.getHex(), NEON.grid.getHex())
-    const gm = grid.material as { opacity: number; transparent: boolean }
-    gm.transparent = true
-    gm.opacity = 0.16
-    grid.position.y = 0.012
-    this.scene.add(grid)
-
-    const platform = new NeonBlock(this.geo, NEON.grid, PLATFORM_R * 2, PLATFORM_H, 3.2)
-    platform.group.position.set(0, PLATFORM_H / 2, 0)
-    this.scene.add(platform.group)
-
-    this.world.addBody(new CANNON.Body({
-      type: CANNON.Body.STATIC,
-      shape: new CANNON.Plane(),
-      quaternion: new CANNON.Quaternion().setFromEuler(-Math.PI / 2, 0, 0),
-    }))
-
-    this.world.addBody(new CANNON.Body({
-      type: CANNON.Body.STATIC,
-      shape: new CANNON.Box(new CANNON.Vec3(PLATFORM_R, PLATFORM_H / 2, 1.6)),
-      position: new CANNON.Vec3(0, PLATFORM_H / 2, 0),
-    }))
+    mesh.rotation.x = -Math.PI / 2
+    mesh.rotation.z = Math.PI / 4
+    mesh.visible = false
+    this.scene.add(mesh)
+    this.bestMark = mesh
   }
 
-  /** Dots showing where the shot will land. Reused every frame, never reallocated. */
-  private buildTracer(): void {
-    const dotGeo = new SphereGeometry(0.075, 8, 6)
-    for (let i = 0; i < 26; i++) {
-      const dot = new Mesh(dotGeo, new MeshLambertMaterial({
-        color: 0x000000, emissive: NEON.orb, transparent: true, opacity: 0.75,
-      }))
-      dot.visible = false
-      this.tracer.push(dot)
-      this.scene.add(dot)
-    }
+  /** Show the record band only while the player is still below it. */
+  private updateBestMark(): void {
+    const mark = this.bestMark
+    if (!mark) return
+    const best = this.hooks.bestHeight()
+    if (best <= 0 || this.score >= best) { mark.visible = false; return }
+    mark.visible = true
+    mark.position.set(0, best * BLOCK_HEIGHT, 0)
+    const mat = mark.material as MeshBasicMaterial
+    mat.opacity = 0.28
   }
 
-  // -------------------------------------------------------------------- level
+  // ---------------------------------------------------------------- lifecycle
 
-  private loadLevel(level: number): void {
-    for (const e of this.entities) this.removeEntity(e)
-    this.entities = []
+  reset(): void {
+    for (const m of this.slabMeshes) this.scene.remove(m)
+    for (const d of this.debris) this.scene.remove(d.mesh)
+    if (this.moving) this.scene.remove(this.moving)
+    this.slabMeshes = []
+    this.debris = []
+    this.stack = []
+    this.moving = null
+    this.score = 0
+    this.combo = 0
+    this.perfects = 0
+    this.bestCombo = 0
+    this.shake = 0
+    this.effects.clear()
+    this.speed = START_SPEED
+    this.direction = 1
 
-    this.level = level
-    this.shots = SHOTS_BASE
-    this.state = 'aiming'
-    this.settleFor = 0
-    this.aim = aimFromDrag(0, 0)
+    const base: Slab = { x: 0, z: 0, w: BASE_SIZE, d: BASE_SIZE, y: 0 }
+    this.stack.push(base)
+    this.slabMeshes.push(this.addSlab(base, 0))
 
-    const pieces = buildStructure(level, PLATFORM_TOP, makeRand(level * 7919 + 13))
-    for (const p of pieces) this.spawnPiece(p)
+    // Snap straight to the base rather than gliding in from nowhere.
+    this.camTarget.set(0, base.y, 0)
+    this.camera.position.copy(this.camTarget).add(CAM_OFFSET)
+    this.camera.lookAt(this.camTarget)
 
-    this.hud.hideOverlay()
-    this.hud.setLevel(level)
-    this.hud.setShots(this.shots)
-    this.hud.setCores(this.coresLeft)
-    this.hud.setScore(this.score)
+    this.hooks.onScore(0)
+    this.hooks.onCombo(0)
+    this.state = 'ready'
   }
 
-  private spawnPiece(p: Piece): void {
-    const color = p.kind === 'core' ? NEON.core : p.kind === 'beam' ? NEON.beam : NEON.pillar
-    const mass = p.kind === 'core' ? 1.6 : p.kind === 'beam' ? 3.2 : 2.4
+  start(): void {
+    if (this.state === 'playing') return
+    this.reset()
+    this.state = 'playing'
+    this.spawnMoving()
+  }
 
-    const body = new CANNON.Body({
-      mass,
-      shape: new CANNON.Box(new CANNON.Vec3(p.w / 2, p.h / 2, p.d / 2)),
-      position: new CANNON.Vec3(p.x, p.y, p.z),
-      sleepSpeedLimit: 0.22,
-      sleepTimeLimit: 0.4,
+  // ------------------------------------------------------------------- meshes
+
+  private addSlab(slab: Slab, index: number): Mesh {
+    const mesh = new Mesh(this.geometry, new MeshLambertMaterial({ color: blockColor(index) }))
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    this.applyTransform(mesh, slab)
+    this.scene.add(mesh)
+    return mesh
+  }
+
+  private applyTransform(mesh: Mesh, slab: Slab): void {
+    mesh.scale.set(slab.w, BLOCK_HEIGHT, slab.d)
+    mesh.position.set(slab.x, slab.y, slab.z)
+  }
+
+  private get top(): Slab {
+    const t = this.stack[this.stack.length - 1]
+    if (!t) throw new Error('tower is empty')
+    return t
+  }
+
+  private spawnMoving(): void {
+    const prev = this.top
+    const level = this.stack.length
+    this.movingAxis = axisForLevel(level)
+
+    const slab: Slab = { ...prev, y: prev.y + BLOCK_HEIGHT }
+    // Alternate the entry side so the rhythm never gets predictable.
+    this.direction = level % 4 < 2 ? 1 : -1
+    const swing = SWING * this.tuning.swingScale
+    if (this.movingAxis === 'x') slab.x = -this.direction * swing
+    else slab.z = -this.direction * swing
+
+    this.moving = this.addSlab(slab, level)
+    this.speed = Math.min(MAX_SPEED, START_SPEED + level * SPEED_STEP) * this.tuning.speedScale
+  }
+
+  private spawnDebris(slab: Slab, index: number, sidewaysSign: number): void {
+    const mesh = this.addSlab(slab, index)
+    const push = this.movingAxis === 'x'
+      ? new Vector3(sidewaysSign * 2.2, 1.5, 0)
+      : new Vector3(0, 1.5, sidewaysSign * 2.2)
+    this.debris.push({
+      mesh,
+      vel: push,
+      spin: new Vector3((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 3, (Math.random() - 0.5) * 6),
+      life: DEBRIS_LIFE,
     })
-    body.allowSleep = true
-    this.world.addBody(body)
-
-    const view = p.kind === 'core'
-      ? new NeonCore(this.geo, color)
-      : new NeonBlock(this.geo, color, p.w, p.h, p.d)
-    this.scene.add(view.group)
-
-    const entity: Entity = {
-      body, group: view.group, view, kind: p.kind, color, heat: 0, age: 0, alive: true,
-    }
-    this.entities.push(entity)
-
-    body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
-      this.onCollide(entity, Math.abs(e.contact.getImpactVelocityAlongNormal()))
-    })
-  }
-
-  private get coresLeft(): number {
-    let n = 0
-    for (const e of this.entities) if (e.kind === 'core' && e.alive) n++
-    return n
-  }
-
-  // -------------------------------------------------------------- destruction
-
-  private onCollide(entity: Entity, impact: number): void {
-    if (!entity.alive || impact < 2) return
-    entity.heat = Math.min(1, entity.heat + impact / 26)
-
-    if (entity.kind === 'core') {
-      if (impact >= CORE_IMPULSE) this.destroyCore(entity)
-      return
-    }
-    if (entity.kind === 'fragment' || entity.kind === 'orb') return
-    if (impact >= FRACTURE_IMPULSE && this.entities.length < MAX_BODIES) {
-      this.fracture(entity)
-    }
-  }
-
-  private destroyCore(entity: Entity): void {
-    if (!entity.alive) return
-    const at = entity.body.position.clone()
-    this.removeEntity(entity)
-    this.score += 500
-    this.shake = Math.min(1, this.shake + 0.85)
-    this.blips.perfect(10)
-    this.burst(at, NEON.core, 9, 0.2)
-    this.hud.setCores(this.coresLeft)
-    this.hud.setScore(this.score)
-  }
-
-  /** Replace a block with a handful of tumbling shards. */
-  private fracture(entity: Entity): void {
-    const at = entity.body.position.clone()
-    const vel = entity.body.velocity.clone()
-    const color = entity.color
-    this.removeEntity(entity)
-    this.score += 25
-    this.shake = Math.min(1, this.shake + 0.3)
-    this.blips.place(0)
-    this.burst(at, color, FRAGMENTS, 0.26, vel)
-    this.hud.setScore(this.score)
-  }
-
-  /** Spawn small dynamic shards flying out of a point. */
-  private burst(
-    at: CANNON.Vec3, color: Color, count: number, size: number,
-    inherit?: CANNON.Vec3,
-  ): void {
-    for (let i = 0; i < count; i++) {
-      if (this.entities.length >= MAX_BODIES) return
-      const s = size * (0.6 + Math.random() * 0.8)
-      const body = new CANNON.Body({
-        mass: 0.35,
-        shape: new CANNON.Box(new CANNON.Vec3(s / 2, s / 2, s / 2)),
-        position: new CANNON.Vec3(
-          at.x + (Math.random() - 0.5) * 0.5,
-          at.y + (Math.random() - 0.5) * 0.5,
-          at.z + (Math.random() - 0.5) * 0.5,
-        ),
-        sleepSpeedLimit: 0.4,
-        sleepTimeLimit: 0.5,
-      })
-      body.velocity.set(
-        (inherit?.x ?? 0) * 0.5 + (Math.random() - 0.5) * 9,
-        (inherit?.y ?? 0) * 0.5 + Math.random() * 7,
-        (inherit?.z ?? 0) * 0.5 + (Math.random() - 0.5) * 9,
-      )
-      body.angularVelocity.set(
-        (Math.random() - 0.5) * 14,
-        (Math.random() - 0.5) * 14,
-        (Math.random() - 0.5) * 14,
-      )
-      this.world.addBody(body)
-
-      const view = new NeonBlock(this.geo, color, s, s, s)
-      this.scene.add(view.group)
-      this.entities.push({
-        body, group: view.group, view, kind: 'fragment', color, heat: 1, age: 0, alive: true,
-      })
-    }
-  }
-
-  private removeEntity(entity: Entity): void {
-    if (!entity.alive) return
-    entity.alive = false
-    this.world.removeBody(entity.body)
-    this.scene.remove(entity.group)
-    entity.view.dispose()
   }
 
   // -------------------------------------------------------------------- input
 
-  beginDrag(): void {
-    if (this.state !== 'aiming') return
-    this.dragging = true
-    this.aim = aimFromDrag(0, 0)
-  }
-
-  updateDrag(dx: number, dy: number): void {
-    if (!this.dragging || this.state !== 'aiming') return
-    this.aim = aimFromDrag(dx, dy)
-  }
-
-  endDrag(dx: number, dy: number, travelled: boolean): void {
-    const wasDragging = this.dragging
-    this.dragging = false
-    if (this.state === 'cleared') { this.loadLevel(this.level + 1); return }
-    if (this.state === 'over') { this.restart(); return }
-    if (this.state !== 'aiming' || !wasDragging) return
-    this.aim = aimFromDrag(travelled ? dx : 0, travelled ? dy : 0)
-    this.fire()
-  }
-
   /** Attract mode: the game plays itself. Also how the loop gets smoke-tested. */
   startDemo(): void {
     this.demo = true
-    this.demoWait = 0.8
+    this.start()
   }
 
-  /** Pick a plausible shot and take it, with a beat between attempts. */
-  private driveDemo(dt: number): void {
-    if (this.state === 'cleared') { this.loadLevel(this.level + 1); return }
-    if (this.state === 'over') { this.restart(); return }
-    if (this.state !== 'aiming') return
-    this.demoWait -= dt
-    if (this.demoWait > 0) return
-    this.demoWait = 1.4
-    this.aim = aimFromDrag((Math.random() - 0.5) * 90, (Math.random() - 0.35) * 110)
-    this.fire()
+  /**
+   * Drop when the slab lines up. Every fourth drop is deliberately sloppy, so
+   * the demo shows the slice and the dust as well as clean perfect rings.
+   */
+  private driveDemo(): void {
+    const mesh = this.moving
+    if (this.state === 'over') { if (this.restartArmed) this.start(); return }
+    if (!mesh || this.state !== 'playing') return
+
+    const prev = this.top
+    const pos = this.movingAxis === 'x' ? mesh.position.x : mesh.position.z
+    const prevPos = this.movingAxis === 'x' ? prev.x : prev.z
+    const off = Math.abs(pos - prevPos)
+
+    const sloppy = this.demoCount % 4 === 3
+    const hit = sloppy ? off >= 0.34 && off <= 0.46 : off <= PERFECT_EPS * 0.45
+    if (!hit) return
+    this.demoCount += 1
+    this.drop()
   }
 
-  /** Advance menus from a keyboard, and fire straight with default power. */
   tap(): void {
-    if (this.state === 'cleared') { this.loadLevel(this.level + 1); return }
-    if (this.state === 'over') { this.restart(); return }
-    if (this.state === 'aiming') this.fire()
+    if (this.state === 'over') {
+      // Swallow taps still landing from the run that just ended, so the score
+      // is actually readable before a restart.
+      if (this.restartArmed) this.start()
+      return
+    }
+    if (this.state === 'ready') {
+      this.start()
+      return
+    }
+    this.drop()
   }
 
-  private restart(): void {
-    this.score = 0
-    this.loadLevel(1)
+  private drop(): void {
+    const mesh = this.moving
+    if (!mesh) return
+
+    const prev = this.top
+    const level = this.stack.length
+    const pos = this.movingAxis === 'x' ? mesh.position.x : mesh.position.z
+    const prevPos = this.movingAxis === 'x' ? prev.x : prev.z
+    const sign = Math.sign(pos - prevPos) || 1
+    // The streak this drop would extend decides how much size comes back.
+    const result = resolveDrop(
+      prev, pos, this.movingAxis, prev.y + BLOCK_HEIGHT, regrowFor(this.combo + 1),
+    )
+
+    if (result.kind === 'miss') {
+      this.scene.remove(mesh)
+      this.moving = null
+      this.spawnDebris(result.debris, level, sign)
+      this.pulse(BUZZ_FAIL)
+      this.shake = 1
+      this.blips.fail()
+      this.gameOver()
+      return
+    }
+
+    if (result.kind === 'perfect') {
+      this.combo += 1
+      this.perfects += 1
+      this.bestCombo = Math.max(this.bestCombo, this.combo)
+      this.blips.perfect(this.combo)
+      this.pulse(BUZZ_PERFECT)
+      this.shake = Math.min(1, this.shake + SHAKE_PERFECT)
+      const slab = result.slab
+      // Push the ring towards white so it reads as a flash rather than a halo,
+      // and brighten further as the streak climbs.
+      const flash = blockColor(level).lerp(
+        new Color(1, 1, 1), Math.min(0.85, 0.5 + this.combo * 0.06),
+      )
+      this.effects.perfectRing(
+        slab.x, slab.y + BLOCK_HEIGHT * 0.55, slab.z,
+        Math.max(slab.w, slab.d) / BASE_SIZE, flash,
+      )
+    } else {
+      this.combo = 0
+      this.blips.place(0)
+      this.pulse(BUZZ_PLACE)
+      this.shake = Math.min(1, this.shake + SHAKE_SLICE)
+      this.spawnDebris(result.debris, level, sign)
+      const d = result.debris
+      this.effects.sliceDust(
+        d.x, d.y, d.z,
+        this.movingAxis === 'x' ? sign : 0,
+        this.movingAxis === 'z' ? sign : 0,
+        blockColor(level),
+      )
+    }
+
+    this.applyTransform(mesh, result.slab)
+    this.stack.push(result.slab)
+    this.slabMeshes.push(mesh)
+    this.moving = null
+
+    this.score += 1
+    this.hooks.onScore(this.score)
+    this.hooks.onCombo(this.combo)
+
+    this.spawnMoving()
   }
 
-  private fire(): void {
-    if (this.shots <= 0) return
-    this.shots -= 1
-    this.hud.setShots(this.shots)
-    this.blips.place(4)
+  private gameOver(): void {
+    this.state = 'over'
+    this.restartArmed = false
+    this.hooks.onCombo(0)
+    const result: RunResult = {
+      score: this.score,
+      perfects: this.perfects,
+      bestCombo: this.bestCombo,
+    }
+    // Let the last slab tumble before the results land.
+    window.setTimeout(() => {
+      if (this.disposed || this.state !== 'over') return
+      this.restartArmed = true
+      this.hooks.onGameOver(result)
+    }, 700)
+  }
 
-    const v = launchVelocity(this.aim)
-    const body = new CANNON.Body({
-      mass: ORB_MASS,
-      shape: new CANNON.Sphere(ORB_R),
-      position: new CANNON.Vec3(MUZZLE.x, MUZZLE.y, MUZZLE.z),
-    })
-    body.velocity.set(v.x, v.y, v.z)
-    body.linearDamping = 0.02
-    body.angularDamping = 0.55
-    this.world.addBody(body)
+  /** Daily runs vary speed and travel; endless always uses the plain tuning. */
+  setTuning(tuning: Tuning): void {
+    this.tuning = tuning
+  }
 
-    const view = new NeonBlock(this.geo, NEON.orb, ORB_R * 2, ORB_R * 2, ORB_R * 2)
-    this.scene.add(view.group)
-    this.entities.push({
-      body, group: view.group, view, kind: 'orb', color: NEON.orb, heat: 1, age: 0, alive: true,
-    })
-    body.addEventListener('collide', (e: { contact: CANNON.ContactEquation }) => {
-      if (Math.abs(e.contact.getImpactVelocityAlongNormal()) > 6) {
-        this.shake = Math.min(1, this.shake + 0.35)
-      }
-    })
+  setHaptics(on: boolean): void {
+    this.allowHaptics = on
+  }
 
-    this.state = 'firing'
-    this.settleFor = 0
+  /** Damp the camera punch and shockwaves for motion sensitivity. */
+  setReducedMotion(on: boolean): void {
+    this.calmMotion = on
+  }
+
+  setSound(on: boolean): void {
+    this.blips.setEnabled(on)
+  }
+
+  private pulse(ms: number): void {
+    if (this.allowHaptics) buzz(ms)
   }
 
   // --------------------------------------------------------------------- loop
 
-  private updateTracer(): void {
-    if (this.state !== 'aiming') {
-      for (const dot of this.tracer) dot.visible = false
-      return
-    }
-    const v = launchVelocity(this.aim)
-    const path = samplePath(MUZZLE, v, this.tracer.length, 0.055, 0)
-    for (let i = 0; i < this.tracer.length; i++) {
-      const dot = this.tracer[i]!
-      const p = path[i]
-      dot.visible = !!p
-      if (p) {
-        dot.position.set(p.x, p.y, p.z)
-        dot.scale.setScalar(1 - (i / this.tracer.length) * 0.6)
-      }
-    }
-  }
-
-  private syncViews(dt: number): void {
-    for (let i = this.entities.length - 1; i >= 0; i--) {
-      const e = this.entities[i]!
-      if (!e.alive) { this.entities.splice(i, 1); continue }
-
-      e.age += dt
-      // Retire a spent orb so it cannot roll around the floor forever, and
-      // sweep up shards that have come to rest far from the action.
-      if (e.kind === 'orb' && (e.age > 5 || Math.abs(e.body.position.x) > 34 || e.body.position.z > 26)) {
-        this.removeEntity(e)
-        this.entities.splice(i, 1)
-        continue
-      }
-
-      e.group.position.set(e.body.position.x, e.body.position.y, e.body.position.z)
-      e.group.quaternion.set(
-        e.body.quaternion.x, e.body.quaternion.y, e.body.quaternion.z, e.body.quaternion.w,
-      )
-
-      if (e.heat > 0) {
-        e.heat = Math.max(0, e.heat - dt * 2.2)
-        if (e.view instanceof NeonBlock) e.view.setHeat(e.heat, e.color)
-      }
-      if (e.view instanceof NeonCore) e.view.pulse(this.clock)
-
-      // A core that falls off the world counts as destroyed, not lost.
-      if (e.body.position.y < KILL_Y) {
-        if (e.kind === 'core') this.destroyCore(e)
-        else this.removeEntity(e)
-        this.entities.splice(i, 1)
-      }
-    }
-  }
-
-  private orbBody(): CANNON.Body | null {
-    for (const e of this.entities) if (e.kind === 'orb') return e.body
-    return null
-  }
-
-  private isSettled(): boolean {
-    for (const e of this.entities) {
-      if (e.kind === 'fragment' || e.kind === 'orb') continue
-      if (e.body.velocity.lengthSquared() > 0.35) return false
-    }
-    return true
-  }
-
-  private judge(dt: number): void {
-    if (this.state !== 'firing' && this.state !== 'settling') return
-
-    if (!this.isSettled()) { this.settleFor = 0; this.state = 'firing'; return }
-    this.settleFor += dt
-    this.state = 'settling'
-    if (this.settleFor < SETTLE_TIME) return
-
-    if (this.coresLeft === 0) {
-      const bonus = this.shots * 250
-      this.score += bonus
-      this.hud.setScore(this.score)
-      this.state = 'cleared'
-      this.hud.showCleared(this.level, bonus)
-      return
-    }
-    if (this.shots <= 0) {
-      this.state = 'over'
-      const isRecord = this.hud.recordScore(this.score)
-      this.hud.showGameOver(this.score, this.level, isRecord)
-      return
-    }
-    this.state = 'aiming'
-  }
-
   private update(dt: number): void {
-    this.clock += dt
-    if (this.demo) this.driveDemo(dt)
-    this.world.step(1 / 60, dt, 4)
-
-    this.syncViews(dt)
-    this.updateTracer()
-    this.judge(dt)
-
-    const orb = this.orbBody()
-    if (orb) {
-      this.orbLight.position.set(orb.position.x, orb.position.y, orb.position.z)
-      this.orbLight.intensity = 30
-    } else {
-      this.orbLight.intensity *= 0.86
+    const mesh = this.moving
+    if (mesh && this.state === 'playing') {
+      const axis = this.movingAxis
+      const current = axis === 'x' ? mesh.position.x : mesh.position.z
+      let next = current + this.direction * this.speed * dt
+      const limit = SWING * this.tuning.swingScale
+      if (Math.abs(next) >= limit) {
+        next = Math.sign(next) * limit
+        this.direction *= -1
+      }
+      if (axis === 'x') mesh.position.x = next
+      else mesh.position.z = next
     }
 
-    this.shake = Math.max(0, this.shake - dt * 2.4)
-    const s = this.shake * this.shake * 0.42
-    this.camera.position.set(
-      this.camBase.x + (Math.random() - 0.5) * s,
-      this.camBase.y + (Math.random() - 0.5) * s,
-      this.camBase.z + (Math.random() - 0.5) * s,
-    )
-    this.camera.lookAt(CAM_LOOK.x, CAM_LOOK.y, CAM_LOOK.z)
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const d = this.debris[i]!
+      d.vel.y -= DEBRIS_GRAVITY * dt
+      d.mesh.position.addScaledVector(d.vel, dt)
+      d.mesh.rotation.x += d.spin.x * dt
+      d.mesh.rotation.y += d.spin.y * dt
+      d.mesh.rotation.z += d.spin.z * dt
+      d.life -= dt
+      if (d.life <= 0) {
+        this.scene.remove(d.mesh)
+        this.debris.splice(i, 1)
+      }
+    }
 
-    this.hud.setPower(this.state === 'aiming' && this.dragging ? this.aim.power : -1)
+    if (this.demo) this.driveDemo()
+
+    this.effects.update(dt)
+    this.updateBestMark()
+
+    // Camera trails the tower top so the active slab sits high in frame.
+    const focus = this.top.y - CAMERA_VIEW * 0.18
+    this.camTarget.y += (focus - this.camTarget.y) * Math.min(1, dt * 4)
+    this.camera.position.copy(this.camTarget).add(CAM_OFFSET)
+
+    // A short punch on impact, squared so it snaps back instead of wobbling.
+    this.shake = Math.max(0, this.shake - dt * SHAKE_DECAY)
+    if (this.shake > 0 && !this.calmMotion) {
+      const s = this.shake * this.shake * 0.5
+      this.camera.position.x += (Math.random() - 0.5) * s
+      this.camera.position.y += (Math.random() - 0.5) * s
+      this.camera.position.z += (Math.random() - 0.5) * s
+    }
+    this.camera.lookAt(this.camTarget)
+
+    this.light.position.copy(this.camTarget).add(new Vector3(7, 16, 9))
+    this.light.target.position.copy(this.camTarget)
+    this.light.target.updateMatrixWorld()
+
+    const want = backdropColor(this.stack.length)
+    this.backdrop.lerp(want, Math.min(1, dt * 1.5))
+    const bg = this.scene.background
+    if (bg instanceof Color) bg.copy(this.backdrop)
+    const fog = this.scene.fog
+    if (fog instanceof Fog) fog.color.copy(this.backdrop)
   }
 
   private frame = (time: number): void => {
     if (this.disposed) return
-    const dt = this.lastTime === 0 ? 0 : Math.min(0.04, (time - this.lastTime) / 1000)
+    const dt = this.lastTime === 0 ? 0 : Math.min(0.05, (time - this.lastTime) / 1000)
     this.lastTime = time
     this.update(dt)
     this.renderer.render(this.scene, this.camera)
     requestAnimationFrame(this.frame)
   }
 
-  run(): void { requestAnimationFrame(this.frame) }
+  run(): void {
+    requestAnimationFrame(this.frame)
+  }
 
   resize(): void {
     const w = window.innerWidth
     const h = window.innerHeight
     this.renderer.setSize(w, h, false)
+
     const aspect = w / h
-    this.camera.aspect = aspect
-    // Portrait is narrow; back off so the whole structure stays in frame.
-    const fit = Math.min(1.55, Math.max(1, 0.62 / aspect))
-    this.camBase.set(CAM_POS.x, CAM_POS.y * (0.7 + fit * 0.3), CAM_POS.z * fit)
+    // Portrait screens are narrow; widen the frustum so the tower never clips.
+    let viewH = CAMERA_VIEW
+    if (viewH * aspect < MIN_VIEW_WIDTH) viewH = MIN_VIEW_WIDTH / aspect
+    const viewW = viewH * aspect
+
+    this.camera.left = -viewW / 2
+    this.camera.right = viewW / 2
+    this.camera.top = viewH / 2
+    this.camera.bottom = -viewH / 2
+    this.camera.near = -60
+    this.camera.far = 140
     this.camera.updateProjectionMatrix()
   }
 
   dispose(): void {
     this.disposed = true
     this.renderer.dispose()
-    this.geo.dispose()
+    this.geometry.dispose()
+    this.effects.dispose()
   }
 }

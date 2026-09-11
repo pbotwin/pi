@@ -5,9 +5,15 @@
 export class Blips {
   private ctx: AudioContext | null = null
   private muted = false
+  private enabled = true
+
+  /** Player setting. Muting never tears down the context, so it can resume. */
+  setEnabled(on: boolean): void {
+    this.enabled = on
+  }
 
   private ensure(): AudioContext | null {
-    if (this.muted) return null
+    if (this.muted || !this.enabled) return null
     if (!this.ctx) {
       const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       if (!Ctor) { this.muted = true; return null }

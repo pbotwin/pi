@@ -1,52 +1,68 @@
-# pi — Overload
+# pi — Stack
 
 [![Deploy to GitHub Pages](https://github.com/pbotwin/pi/actions/workflows/deploy.yml/badge.svg)](https://github.com/pbotwin/pi/actions/workflows/deploy.yml)
 
-A neon physics demolition game for phone portrait screens.
+A one-tap 3D tower-stacking game for phone portrait screens, wrapped in a real
+app shell: menus, a daily challenge, score tables, lifetime stats, milestones,
+settings and offline play.
 
 **Play: https://pbotwin.github.io/pi/** · **Watch it play itself: [`/?demo=1`](https://pbotwin.github.io/pi/?demo=1)**
 
-Each sector puts a neon scaffold on a platform with glowing cores buried inside
-it. You get four charges. Drag anywhere to aim — the arc previews where the shot
-goes — and release to fire. Blocks shatter into tumbling shards, structures
-topple under their own weight, and a core dies when something hits it hard
-enough or it falls off the world. Clear every core to advance; unused charges
-bank as bonus score.
+A slab slides above the tower. Tap to drop it. Whatever hangs over the edge is
+sheared off, so the tower narrows with every sloppy drop. Land one dead centre
+for a **perfect** — the slab grows back, and a *streak* of perfects gives back
+progressively more, so precision compounds instead of merely holding station.
+Miss the tower completely and the run ends.
 
-## How it works
+## Features
 
-Rigid bodies are simulated with **cannon-es**; Three.js only ever draws what the
-solver reports. Blocks that take a hard enough hit are swapped for a handful of
-smaller dynamic shards, which is what turns "boxes fall over" into destruction.
-A body cap keeps a chain reaction from melting a phone.
+- **Endless** and a **daily challenge** — one shared variation per calendar day,
+  derived from the date, so everyone plays the same thing without a server
+- **Score tables** per mode, **lifetime stats** and **8 milestones**
+- **Best-height band** floating in the scene, marking your record to beat
+- **Feel**: perfect shockwaves, slice dust, camera punch, haptics, procedural audio
+- **Settings**: name, sound, vibration, reduced motion, data reset
+- **Share** a run via the native share sheet, clipboard fallback
+- **Installable PWA**, playable offline
+- **Deep links** — `#scores`, `#stats`, `#settings` address screens directly
 
-Two things are kept as pure functions with no engine and no DOM, so they can be
-tested directly:
+## Scores and the global board
 
-- **`structure.ts`** — procedural scaffolds. Generation is checked to never emit
-  intersecting pieces and to leave nothing floating, so towers cannot explode
-  the instant the solver wakes up.
-- **`trajectory.ts`** — the aiming maths. The preview arc and the velocity handed
-  to the solver come from the same functions, so what you see is what you get.
+GitHub Pages serves static files only, so there is no server to hold a shared
+leaderboard. Scores are therefore stored on the device by default.
 
-## Stack
+Everything goes through one `Leaderboard` interface, with a local implementation
+and a Supabase-backed global one. Supply two build-time variables and the global
+board takes over — no other code changes:
 
-- **Three.js** — rendering, shadows, neon materials
-- **cannon-es** — rigid-body physics
-- **TypeScript** — strict mode
-- **Vite** — dev server and production build
-- **Vitest** — structure generation and ballistics
+```
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key>
+```
 
-No art assets. Every block is a scaled unit cube: a dark emissive body wrapped
-in additive wireframe edges, which reads as neon far more cheaply than a bloom
-pass would on a phone.
+The anon key is meant to be public; safety comes from row-level security on the
+table, not from hiding the key. Never put a service-role key here. If the
+network fails the game silently falls back to the local board, so a run is never
+lost.
+
+## Architecture
+
+Game logic is kept free of Three.js and the DOM so it can be tested directly:
+
+- `game/tower.ts` — stacking maths: slicing, perfect tolerance, streak regrowth
+- `app/scores.ts` — ranking, tie-breaks, stats, milestones
+- `app/daily.ts` — date → seed → daily tuning
+- `app/settings.ts` — defaults and tolerant merging of stored settings
+
+`ui/shell.ts` owns navigation and persistence; `game/Game.ts` renders and reports
+events through a small hooks interface, and knows nothing about the UI.
 
 ## Commands
 
 ```bash
 npm install
 npm run dev       # dev server with hot reload
-npm test          # structure + trajectory tests
+npm test          # 45 unit tests
 npm run build     # typecheck + production build into dist/
 npm run preview   # serve the built output locally
 ```
@@ -55,23 +71,26 @@ npm run preview   # serve the built output locally
 
 ```
 src/
-  main.ts               entry point, drag-to-aim input
-  style.css             HUD, power meter, overlay, portrait layout
+  main.ts              entry point, input wiring, service worker
+  style.css            HUD, screens, portrait layout
+  app/
+    scores.ts          ranking, stats, milestones  (pure)
+    daily.ts           daily seed and tuning       (pure)
+    settings.ts        settings model              (pure)
+    storage.ts         safe localStorage access
+    leaderboard.ts     local + Supabase boards behind one interface
+    app.test.ts        tests for the above
   game/
-    Game.ts             scene, physics world, destruction, game loop
-    structure.ts        procedural scaffolds — pure data, no engine
-    structure.test.ts   overlap, support and difficulty-curve tests
-    trajectory.ts       aiming and ballistics — pure maths
-    trajectory.test.ts  aim mapping, launch, arc sampling tests
-    neon.ts             neon block and core meshes
-    config.ts           gameplay tunables
-    audio.ts            procedural WebAudio blips
+    Game.ts            scene, camera rig, loop, state machine
+    tower.ts           stacking maths              (pure)
+    tower.test.ts      tests for the above
+    effects.ts         shockwaves, dust, haptics
+    config.ts          gameplay tunables
+    palette.ts         colour ramp
+    audio.ts           procedural WebAudio blips
   ui/
-    hud.ts              score, sector, cores, charges, overlay
+    shell.ts           menus, screens, persistence, routing
 ```
-
-Feel is tuned entirely through `config.ts` — gravity, fracture threshold,
-fragment count, shot power, camera framing, body cap.
 
 ## Deployment
 
