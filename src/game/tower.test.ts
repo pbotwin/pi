@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { axisForLevel, regrowFor, resolveDrop, sizeAlong, type Slab } from './tower'
-import { BASE_SIZE, PERFECT_EPS, PERFECT_REGROW, PERFECT_REGROW_MAX } from './config'
+import {
+  axisForLevel, entersZone, regrowFor, resolveDrop, sizeAlong, zoneIndex, zoneName,
+  type Slab,
+} from './tower'
+import {
+  BASE_SIZE, GOOD_EPS, PERFECT_EPS, PERFECT_REGROW, PERFECT_REGROW_MAX,
+} from './config'
 
 const base = (): Slab => ({ x: 0, z: 0, w: BASE_SIZE, d: BASE_SIZE, y: 0 })
 
@@ -168,5 +173,78 @@ describe('resolveDrop with a custom regrow', () => {
       if (b.kind === 'perfect') streak = b.slab.w
     }
     expect(streak).toBeGreaterThan(solo)
+  })
+})
+
+describe('near-miss tier', () => {
+  const base = (): Slab => ({ x: 0, z: 0, w: BASE_SIZE, d: BASE_SIZE, y: 0 })
+
+  it('grades a small overhang as good', () => {
+    const r = resolveDrop(base(), GOOD_EPS - 0.01, 'x', 1)
+    if (r.kind !== 'sliced') throw new Error('expected slice')
+    expect(r.tier).toBe('good')
+  })
+
+  it('grades a large overhang as plain', () => {
+    const r = resolveDrop(base(), GOOD_EPS + 0.01, 'x', 1)
+    if (r.kind !== 'sliced') throw new Error('expected slice')
+    expect(r.tier).toBe('plain')
+  })
+
+  it('hands a sliver back on a good drop, but never grows the slab', () => {
+    const offset = 0.2
+    const good = resolveDrop(base(), offset, 'x', 1)
+    if (good.kind !== 'sliced') throw new Error('expected slice')
+    expect(good.slab.w).toBeGreaterThan(BASE_SIZE - offset)
+    expect(good.slab.w).toBeLessThanOrEqual(BASE_SIZE)
+  })
+
+  it('keeps a plain slice at exactly the overlap', () => {
+    const offset = 1.0
+    const r = resolveDrop(base(), offset, 'x', 1)
+    if (r.kind !== 'sliced') throw new Error('expected slice')
+    expect(r.slab.w).toBeCloseTo(BASE_SIZE - offset)
+  })
+
+  it('still shrinks the tower on every good drop', () => {
+    let width = BASE_SIZE
+    for (let i = 0; i < 10; i++) {
+      const r = resolveDrop({ x: 0, z: 0, w: width, d: 3, y: 0 }, 0.2, 'x', 1)
+      if (r.kind !== 'sliced') throw new Error('expected slice')
+      expect(r.slab.w).toBeLessThan(width)
+      width = r.slab.w
+    }
+    expect(width).toBeLessThan(BASE_SIZE)
+  })
+
+  it('is still a perfect, not a good, inside the tight tolerance', () => {
+    expect(resolveDrop(base(), PERFECT_EPS - 0.001, 'x', 1).kind).toBe('perfect')
+  })
+})
+
+describe('zones', () => {
+  it('advances every ZONE_SIZE blocks', () => {
+    expect(zoneIndex(0)).toBe(0)
+    expect(zoneIndex(9)).toBe(0)
+    expect(zoneIndex(10)).toBe(1)
+    expect(zoneIndex(25)).toBe(2)
+  })
+
+  it('never goes negative', () => {
+    expect(zoneIndex(-5)).toBe(0)
+  })
+
+  it('names early zones and keeps naming past the list', () => {
+    expect(zoneName(0)).toBe('GROUND LEVEL')
+    expect(zoneName(10)).toBe('MIDRISE')
+    expect(zoneName(9999)).toContain('THE VOID')
+  })
+
+  it('fires only on the crossing block, never at zero', () => {
+    expect(entersZone(0)).toBe(false)
+    expect(entersZone(9)).toBe(false)
+    expect(entersZone(10)).toBe(true)
+    expect(entersZone(11)).toBe(false)
+    expect(entersZone(20)).toBe(true)
   })
 })

@@ -10,13 +10,18 @@ import {
   PERFECT_EPS, SHAKE_PERFECT, SHAKE_SLICE, SPEED_STEP, START_SPEED, SWING,
 } from './config'
 import { backdropColor, blockColor } from './palette'
-import { axisForLevel, regrowFor, resolveDrop, type Axis, type Slab } from './tower'
+import {
+  axisForLevel, entersZone, regrowFor, resolveDrop, zoneName,
+  type Axis, type Slab,
+} from './tower'
 import { Blips } from './audio'
 import { Effects, buzz } from './effects'
 /** What the game reports outwards. The app shell owns all the UI. */
 export interface GameHooks {
   onScore(score: number): void
   onCombo(combo: number): void
+  /** Transient banner: a near miss, or crossing into a new zone. */
+  onFlash(text: string, kind: 'good' | 'zone'): void
   onGameOver(result: RunResult): void
   /** Height, in blocks, of the band to beat. Zero hides it. */
   bestHeight(): number
@@ -87,6 +92,9 @@ export class Game {
   private tuning: Tuning = { speedScale: 1, swingScale: 1 }
   private allowHaptics = true
   private calmMotion = false
+  private baseViewH = CAMERA_VIEW
+  private baseAspect = 1
+  private viewScale = 1
 
   constructor(canvas: HTMLCanvasElement, hooks: GameHooks) {
     this.hooks = hooks
@@ -160,6 +168,8 @@ export class Game {
     this.perfects = 0
     this.bestCombo = 0
     this.shake = 0
+    this.viewScale = 1
+    this.applyFrustum()
     this.effects.clear()
     this.speed = START_SPEED
     this.direction = 1
@@ -238,10 +248,12 @@ export class Game {
 
   // -------------------------------------------------------------------- input
 
-  /** Attract mode: the game plays itself. Also how the loop gets smoke-tested. */
-  startDemo(): void {
-    this.demo = true
-    this.start()
+  /**
+   * Attract mode: the game drives its own taps. Starting the run is still the
+   * shell's job, so the menu overlay actually comes down.
+   */
+  setDemo(on: boolean): void {
+    this.demo = on
   }
 
   /**
@@ -250,7 +262,8 @@ export class Game {
    */
   private driveDemo(): void {
     const mesh = this.moving
-    if (this.state === 'over') { if (this.restartArmed) this.start(); return }
+    // Restarting is the shell's job — it has to clear the results overlay.
+    if (this.state !== 'playing') return
     if (!mesh || this.state !== 'playing') return
 
     const prev = this.top
@@ -322,10 +335,16 @@ export class Game {
         Math.max(slab.w, slab.d) / BASE_SIZE, flash,
       )
     } else {
-      this.combo = 0
-      this.blips.place(0)
+      const good = result.tier === 'good'
+      // A near miss spares the streak; only a sloppy drop breaks it.
+      if (good) {
+        this.hooks.onFlash('GOOD', 'good')
+      } else {
+        this.combo = 0
+      }
+      this.blips.place(good ? 5 : 0)
       this.pulse(BUZZ_PLACE)
-      this.shake = Math.min(1, this.shake + SHAKE_SLICE)
+      this.shake = Math.min(1, this.shake + (good ? SHAKE_SLICE * 0.45 : SHAKE_SLICE))
       this.spawnDebris(result.debris, level, sign)
       const d = result.debris
       this.effects.sliceDust(
@@ -344,6 +363,7 @@ export class Game {
     this.score += 1
     this.hooks.onScore(this.score)
     this.hooks.onCombo(this.combo)
+    if (entersZone(this.score)) this.hooks.onFlash(zoneName(this.score), 'zone')
 
     this.spawnMoving()
   }
@@ -423,8 +443,19 @@ export class Game {
     this.effects.update(dt)
     this.updateBestMark()
 
-    // Camera trails the tower top so the active slab sits high in frame.
-    const focus = this.top.y - CAMERA_VIEW * 0.18
+    // While playing, the camera trails the tower top so the active slab sits
+    // high in frame. Once the run ends it pulls back to reveal the whole tower
+    // — the thing the player actually built.
+    let focus: number
+    if (this.state === 'over') {
+      const towerTop = this.top.y + BLOCK_HEIGHT
+      const want = Math.max(1, (towerTop + BLOCK_HEIGHT * 4) / this.baseViewH)
+      this.viewScale += (want - this.viewScale) * Math.min(1, dt * 1.6)
+      this.applyFrustum()
+      focus = towerTop / 2
+    } else {
+      focus = this.top.y - this.baseViewH * this.viewScale * 0.18
+    }
     this.camTarget.y += (focus - this.camTarget.y) * Math.min(1, dt * 4)
     this.camera.position.copy(this.camTarget).add(CAM_OFFSET)
 
@@ -472,14 +503,22 @@ export class Game {
     // Portrait screens are narrow; widen the frustum so the tower never clips.
     let viewH = CAMERA_VIEW
     if (viewH * aspect < MIN_VIEW_WIDTH) viewH = MIN_VIEW_WIDTH / aspect
-    const viewW = viewH * aspect
 
+    this.baseViewH = viewH
+    this.baseAspect = aspect
+    this.applyFrustum()
+  }
+
+  /** Frustum at the current zoom. The end-of-run pull-back scales this. */
+  private applyFrustum(): void {
+    const viewH = this.baseViewH * this.viewScale
+    const viewW = viewH * this.baseAspect
     this.camera.left = -viewW / 2
     this.camera.right = viewW / 2
     this.camera.top = viewH / 2
     this.camera.bottom = -viewH / 2
-    this.camera.near = -60
-    this.camera.far = 140
+    this.camera.near = -90
+    this.camera.far = 220
     this.camera.updateProjectionMatrix()
   }
 

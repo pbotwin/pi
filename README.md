@@ -9,10 +9,18 @@ settings and offline play.
 **Play: https://pbotwin.github.io/pi/** · **Watch it play itself: [`/?demo=1`](https://pbotwin.github.io/pi/?demo=1)**
 
 A slab slides above the tower. Tap to drop it. Whatever hangs over the edge is
-sheared off, so the tower narrows with every sloppy drop. Land one dead centre
-for a **perfect** — the slab grows back, and a *streak* of perfects gives back
-progressively more, so precision compounds instead of merely holding station.
-Miss the tower completely and the run ends.
+sheared off, so the tower narrows with every sloppy drop.
+
+Drops are graded in three tiers. **Perfect** snaps the slab dead centre and
+grows it back — and a *streak* of perfects gives back progressively more, so
+precision compounds instead of merely holding station. A near miss counts as
+**good**: it still shears the slab, but hands a sliver back and spares the
+streak, so one slightly-late tap does not wipe out a long run of precision.
+Anything sloppier breaks the streak. Miss the tower completely and the run ends.
+
+Every ten blocks crosses into a new **zone** — Midrise, Skyline, Cloud Deck,
+Stratosphere, and up into the void. When the run ends the camera pulls back to
+reveal the whole tower you built.
 
 ## Features
 
@@ -20,6 +28,7 @@ Miss the tower completely and the run ends.
   derived from the date, so everyone plays the same thing without a server
 - **Score tables** per mode, **lifetime stats** and **8 milestones**
 - **Best-height band** floating in the scene, marking your record to beat
+- **Zones** every ten blocks, and an end-of-run pull-back over the finished tower
 - **Feel**: perfect shockwaves, slice dust, camera punch, haptics, procedural audio
 - **Settings**: name, sound, vibration, reduced motion, data reset
 - **Share** a run via the native share sheet, clipboard fallback

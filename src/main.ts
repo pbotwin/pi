@@ -12,7 +12,8 @@ game.run()
 
 // Attract mode: ?demo or #demo makes the game play itself.
 if (new URLSearchParams(location.search).has('demo') || location.hash === '#demo') {
-  game.startDemo()
+  game.setDemo(true)
+  shell.enableDemo()
 }
 
 window.addEventListener('resize', () => game.resize())

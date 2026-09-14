@@ -59,6 +59,22 @@ button, input { font: inherit; color: inherit; }
 }
 #combo.hidden { opacity: 0; }
 
+/* Transient banner: a near miss, or crossing into a new zone. */
+#flash {
+  margin-top: 0.45rem;
+  font-size: clamp(0.72rem, 3.2vw, 0.95rem);
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-indent: 0.24em;
+  text-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+#flash.show { opacity: 1; transform: translateY(0); }
+#flash.zone { color: var(--accent-2); font-size: clamp(0.85rem, 4.2vw, 1.2rem); }
+#flash.good { color: var(--ink); opacity: 0.75; }
+
 #quit {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 1rem);

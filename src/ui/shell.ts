@@ -37,6 +37,8 @@ export class Shell {
   private hud = el('hud')
   private scoreEl = el('score')
   private comboEl = el('combo')
+  private flashEl = el('flash')
+  private flashTimer = 0
   private toastEl = el('toast')
 
   private screens = new Map<Screen, HTMLElement>()
@@ -49,6 +51,7 @@ export class Shell {
   private mode: Mode = 'endless'
   private boardTab: Mode = 'endless'
   private lastResult: RunResult | null = null
+  private demoMode = false
   private game!: Game
 
   constructor() {
@@ -89,6 +92,12 @@ export class Shell {
     if (location.hash === want) return
     if (location.hash === 'demo') return
     history.replaceState(null, '', want || location.pathname + location.search)
+  }
+
+  /** Attract mode: show the result briefly, then play the next run. */
+  enableDemo(): void {
+    this.demoMode = true
+    this.startRun('endless')
   }
 
   attach(game: Game): void {
@@ -174,9 +183,21 @@ export class Shell {
           this.comboEl.classList.add('hidden')
         }
       },
+      onFlash: (text: string, kind: 'good' | 'zone') => this.flash(text, kind),
       onGameOver: (result: RunResult) => { void this.finish(result) },
       bestHeight: () => bestOf(this.table),
     }
+  }
+
+  /** A brief banner over the HUD. A zone lingers longer than a near miss. */
+  private flash(text: string, kind: 'good' | 'zone'): void {
+    window.clearTimeout(this.flashTimer)
+    this.flashEl.textContent = text
+    this.flashEl.className = `show ${kind}`
+    this.flashTimer = window.setTimeout(
+      () => { this.flashEl.className = kind },
+      kind === 'zone' ? 1500 : 600,
+    )
   }
 
   private async finish(result: RunResult): Promise<void> {
@@ -212,6 +233,9 @@ export class Shell {
     el('over-detail').textContent = bits.join(' · ')
 
     this.show('over')
+    if (this.demoMode) {
+      window.setTimeout(() => { if (this.demoMode) this.startRun(this.mode) }, 2600)
+    }
   }
 
   /** Hand out the link. Everyone who plays it lands on the same board. */

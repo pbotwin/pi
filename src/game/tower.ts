@@ -3,7 +3,8 @@
  * reasoned about (and tested) without standing up a renderer.
  */
 import {
-  BASE_SIZE, COMBO_RAMP, PERFECT_EPS, PERFECT_REGROW, PERFECT_REGROW_MAX,
+  BASE_SIZE, COMBO_RAMP, GOOD_EPS, GOOD_REGROW, PERFECT_EPS,
+  PERFECT_REGROW, PERFECT_REGROW_MAX, ZONE_SIZE,
 } from './config'
 
 export type Axis = 'x' | 'z'
@@ -19,9 +20,12 @@ export interface Slab {
   y: number
 }
 
+/** How cleanly a sheared drop landed. */
+export type SliceTier = 'good' | 'plain'
+
 export type Placement =
   | { kind: 'perfect'; slab: Slab }
-  | { kind: 'sliced'; slab: Slab; debris: Slab }
+  | { kind: 'sliced'; tier: SliceTier; slab: Slab; debris: Slab }
   | { kind: 'miss'; debris: Slab }
 
 export function sizeAlong(slab: Slab, axis: Axis): number {
@@ -80,12 +84,39 @@ export function resolveDrop(
   // Partial overlap: keep the intersection, shear off the rest.
   const overlap = size - offset
   const centre = (movingPos + prevPos) / 2
-  const slab = withSize(withPos({ ...prev, y }, axis, centre), axis, overlap)
+
+  // A near miss hands a sliver back, softening the punishment for being a
+  // fraction late without ever exceeding what was there before the drop.
+  const tier: SliceTier = offset <= GOOD_EPS ? 'good' : 'plain'
+  const kept = tier === 'good' ? Math.min(size, overlap + GOOD_REGROW) : overlap
+
+  const slab = withSize(withPos({ ...prev, y }, axis, centre), axis, kept)
 
   const debrisCentre = centre + Math.sign(delta) * (size / 2)
   const debris = withSize(withPos({ ...prev, y }, axis, debrisCentre), axis, offset)
 
-  return { kind: 'sliced', slab, debris }
+  return { kind: 'sliced', tier, slab, debris }
+}
+
+/** Zone index for a score — a new landmark every ZONE_SIZE blocks. */
+export function zoneIndex(score: number): number {
+  return Math.floor(Math.max(0, score) / ZONE_SIZE)
+}
+
+const ZONE_NAMES = [
+  'GROUND LEVEL', 'MIDRISE', 'SKYLINE', 'CLOUD DECK', 'STRATOSPHERE',
+  'MESOSPHERE', 'THERMOSPHERE', 'LOW ORBIT', 'DEEP ORBIT', 'THE VOID',
+]
+
+/** Name of the zone at a score. Past the last name, the void just deepens. */
+export function zoneName(score: number): string {
+  const i = zoneIndex(score)
+  return ZONE_NAMES[i] ?? `${ZONE_NAMES[ZONE_NAMES.length - 1]} ${i - ZONE_NAMES.length + 2}`
+}
+
+/** True on the exact block that crosses into a new zone (never at the start). */
+export function entersZone(score: number): boolean {
+  return score > 0 && score % ZONE_SIZE === 0
 }
 
 /** Axis alternates each level so the tower twists as it climbs. */

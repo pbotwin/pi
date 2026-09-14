@@ -45,3 +45,14 @@ export const SHAKE_PERFECT = 0.16
 export const BUZZ_PLACE = 12
 export const BUZZ_PERFECT = 26
 export const BUZZ_FAIL = 90
+
+/**
+ * A near-miss tier between perfect and sloppy. It still shears the slab, but
+ * hands a sliver back and — crucially — spares the perfect streak, so one
+ * slightly-late tap does not wipe out a long run of precision.
+ */
+export const GOOD_EPS = 0.34
+export const GOOD_REGROW = 0.025
+
+/** Zones give a long climb visible landmarks. */
+export const ZONE_SIZE = 10
